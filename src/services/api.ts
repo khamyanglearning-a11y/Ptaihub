@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import { Word, Sentence } from '../types';
-import { supabase } from '../lib/supabase';
+
+const API_BASE = '/api/dictionary';
 
 // Admin credentials from env or defaults
 const ADMIN_USERNAME = import.meta.env.VITE_ADMIN_USERNAME || 'admin';
@@ -17,7 +18,7 @@ export const apiService = {
       return { success: false, message: 'Invalid username' };
     }
 
-    const isMatch = ADMIN_PASSWORD_HASH.startsWith('$2a$') 
+    const isMatch = ADMIN_PASSWORD_HASH.startsWith('$2a$')
       ? bcrypt.compareSync(password, ADMIN_PASSWORD_HASH)
       : password === ADMIN_PASSWORD_HASH;
 
@@ -54,27 +55,16 @@ export const apiService = {
 
   async fetchData(): Promise<{ words: Word[]; sentences: Sentence[] }> {
     try {
-      const { data: words, error: wordsError } = await supabase
-        .from('words')
-        .select('*')
-        .eq('status', 'active')
-        .order('date_added', { ascending: false });
+      const res = await fetch(`${API_BASE}?action=fetch`);
+      if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+      const data = await res.json();
 
-      const { data: sentences, error: sentencesError } = await supabase
-        .from('sentences')
-        .select('*')
-        .eq('status', 'active')
-        .order('date_added', { ascending: false });
-
-      if (wordsError || sentencesError) throw wordsError || sentencesError;
-
-      // Map snake_case to camelCase
-      const mappedWords = (words || []).map(w => ({
+      const mappedWords = (data.words || []).map((w: any) => ({
         ...w,
         dateAdded: w.date_added
       }));
 
-      const mappedSentences = (sentences || []).map(s => ({
+      const mappedSentences = (data.sentences || []).map((s: any) => ({
         ...s,
         dateAdded: s.date_added
       }));
@@ -87,27 +77,24 @@ export const apiService = {
   },
 
   fetchDataSync(): { words: Word[]; sentences: Sentence[] } {
-    // This is a placeholder for sync access, but since Supabase is async,
-    // we'll return an empty object or handle it in the component.
     return { words: [], sentences: [] };
   },
 
   async addWord(word: Omit<Word, 'id' | 'dateAdded' | 'status'>): Promise<{ success: boolean; id?: string }> {
     try {
-      const { data, error } = await supabase
-        .from('words')
-        .insert([{
+      const res = await fetch(`${API_BASE}?action=add&type=words`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           english: word.english,
           tai: word.tai,
           assamese: word.assamese,
           pronunciation: word.pronunciation,
-          status: 'active'
-        }])
-        .select()
-        .single();
-
-      if (error) throw error;
-      return { success: true, id: data.id };
+        }),
+      });
+      if (!res.ok) throw new Error(`Add word failed: ${res.status}`);
+      const data = await res.json();
+      return { success: data.success, id: data.id };
     } catch (error) {
       console.error('Add word error:', error);
       return { success: false };
@@ -116,19 +103,18 @@ export const apiService = {
 
   async addSentence(sentence: Omit<Sentence, 'id' | 'dateAdded' | 'status'>): Promise<{ success: boolean; id?: string }> {
     try {
-      const { data, error } = await supabase
-        .from('sentences')
-        .insert([{
+      const res = await fetch(`${API_BASE}?action=add&type=sentences`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           english: sentence.english,
           tai: sentence.tai,
           pronunciation: sentence.pronunciation,
-          status: 'active'
-        }])
-        .select()
-        .single();
-
-      if (error) throw error;
-      return { success: true, id: data.id };
+        }),
+      });
+      if (!res.ok) throw new Error(`Add sentence failed: ${res.status}`);
+      const data = await res.json();
+      return { success: data.success, id: data.id };
     } catch (error) {
       console.error('Add sentence error:', error);
       return { success: false };
@@ -137,13 +123,14 @@ export const apiService = {
 
   async updateWord(id: string, updatedWord: Partial<Word>): Promise<{ success: boolean }> {
     try {
-      const { error } = await supabase
-        .from('words')
-        .update(updatedWord)
-        .eq('id', id);
-
-      if (error) throw error;
-      return { success: true };
+      const res = await fetch(`${API_BASE}?action=update&type=words&id=${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedWord),
+      });
+      if (!res.ok) throw new Error(`Update word failed: ${res.status}`);
+      const data = await res.json();
+      return { success: data.success };
     } catch (error) {
       console.error('Update word error:', error);
       return { success: false };
@@ -152,13 +139,14 @@ export const apiService = {
 
   async updateSentence(id: string, updatedSentence: Partial<Sentence>): Promise<{ success: boolean }> {
     try {
-      const { error } = await supabase
-        .from('sentences')
-        .update(updatedSentence)
-        .eq('id', id);
-
-      if (error) throw error;
-      return { success: true };
+      const res = await fetch(`${API_BASE}?action=update&type=sentences&id=${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedSentence),
+      });
+      if (!res.ok) throw new Error(`Update sentence failed: ${res.status}`);
+      const data = await res.json();
+      return { success: data.success };
     } catch (error) {
       console.error('Update sentence error:', error);
       return { success: false };
@@ -168,13 +156,12 @@ export const apiService = {
   async deleteItem(type: 'word' | 'sentence', id: string): Promise<{ success: boolean }> {
     try {
       const table = type === 'word' ? 'words' : 'sentences';
-      const { error } = await supabase
-        .from(table)
-        .update({ status: 'deleted' })
-        .eq('id', id);
-
-      if (error) throw error;
-      return { success: true };
+      const res = await fetch(`${API_BASE}?action=delete&type=${table}&id=${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+      const data = await res.json();
+      return { success: data.success };
     } catch (error) {
       console.error('Delete item error:', error);
       return { success: false };
