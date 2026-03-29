@@ -81,6 +81,7 @@ export default function App() {
   });
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'checking' | 'connected' | 'failed'>('checking');
   const [searchQuery, setSearchQuery] = useState('');
   const [isDarkMode, setIsDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -94,6 +95,11 @@ export default function App() {
   useEffect(() => {
     const loadData = async () => {
       setIsLoading(true);
+      
+      // Check connection
+      const conn = await apiService.checkConnection();
+      setConnectionStatus(conn.connected ? 'connected' : 'failed');
+
       const offline = apiService.getOfflineData();
       setLastSync(offline.lastSync);
 
@@ -218,13 +224,15 @@ export default function App() {
     <div className="min-h-screen pb-24 flex flex-col max-w-md mx-auto relative">
       {/* Header */}
       <header className="sticky top-0 z-10 bg-[var(--background)]/80 backdrop-blur-md px-6 py-4 flex justify-between items-center">
-        <h1 className="text-2xl font-bold tracking-tight">Tai Hub</h1>
-        <button 
-          onClick={() => setIsDarkMode(!isDarkMode)}
-          className="p-2 rounded-full bg-[var(--muted)] text-[var(--foreground)]"
-        >
-          {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
-        </button>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold tracking-tight">Tai Hub</h1>
+          <div className={cn(
+            "w-2 h-2 rounded-full",
+            connectionStatus === 'connected' ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" : 
+            connectionStatus === 'failed' ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]" : 
+            "bg-gray-400 animate-pulse"
+          )} title={connectionStatus === 'connected' ? "Supabase Connected" : "Connection Failed"} />
+        </div>
       </header>
 
       {/* Main Content */}
@@ -406,10 +414,35 @@ export default function App() {
               className="space-y-6"
             >
               {!isLoggedIn ? (
-                <LoginForm onLoginSuccess={() => {
-                  setIsLoggedIn(true);
-                  localStorage.setItem('isLoggedIn', 'true');
-                }} />
+                <>
+                  <Card className="flex items-center justify-between p-4 mb-6">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-purple-100 dark:bg-purple-900/30 text-purple-600 rounded-xl">
+                        {isDarkMode ? <Moon size={20} /> : <Sun size={20} />}
+                      </div>
+                      <div>
+                        <p className="font-bold">Dark Mode</p>
+                        <p className="text-xs text-[var(--muted-foreground)]">Change app appearance</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => setIsDarkMode(!isDarkMode)}
+                      className={cn(
+                        "w-12 h-6 rounded-full transition-colors relative",
+                        isDarkMode ? "bg-purple-600" : "bg-gray-200"
+                      )}
+                    >
+                      <div className={cn(
+                        "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                        isDarkMode ? "left-7" : "left-1"
+                      )} />
+                    </button>
+                  </Card>
+                  <LoginForm onLoginSuccess={() => {
+                    setIsLoggedIn(true);
+                    localStorage.setItem('isLoggedIn', 'true');
+                  }} />
+                </>
               ) : (
                 <AdminPanel 
                   onLogout={() => {
@@ -424,6 +457,8 @@ export default function App() {
                     setWords(data.words);
                     setSentences(data.sentences);
                   }}
+                  isDarkMode={isDarkMode}
+                  setIsDarkMode={setIsDarkMode}
                 />
               )}
             </motion.div>
@@ -540,11 +575,13 @@ const LoginForm = ({ onLoginSuccess }: { onLoginSuccess: () => void }) => {
   );
 };
 
-const AdminPanel = ({ onLogout, words, sentences, refreshData }: { 
+const AdminPanel = ({ onLogout, words, sentences, refreshData, isDarkMode, setIsDarkMode }: { 
   onLogout: () => void; 
   words: Word[]; 
   sentences: Sentence[]; 
   refreshData: () => Promise<void>;
+  isDarkMode: boolean;
+  setIsDarkMode: (v: boolean) => void;
 }) => {
   const [view, setView] = useState<'menu' | 'addWord' | 'addSentence' | 'manage' | 'changePass'>('menu');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -563,7 +600,7 @@ const AdminPanel = ({ onLogout, words, sentences, refreshData }: {
       setView('menu');
       refreshData();
     } else {
-      showToast("Failed to add word", "error");
+      showToast(res.message || "Failed to add word", "error");
     }
     setIsSubmitting(false);
   };
@@ -576,7 +613,7 @@ const AdminPanel = ({ onLogout, words, sentences, refreshData }: {
       setView('menu');
       refreshData();
     } else {
-      showToast("Failed to add sentence", "error");
+      showToast(res.message || "Failed to add sentence", "error");
     }
     setIsSubmitting(false);
   };
@@ -595,10 +632,6 @@ const AdminPanel = ({ onLogout, words, sentences, refreshData }: {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-bold">Admin Dashboard</h2>
-        <Button variant="ghost" onClick={onLogout} className="flex items-center gap-2 text-red-500">
-          <LogOut size={18} />
-          <span>Logout</span>
-        </Button>
       </div>
 
       <AnimatePresence mode="wait">
@@ -613,7 +646,21 @@ const AdminPanel = ({ onLogout, words, sentences, refreshData }: {
             <MenuButton icon={<Plus size={20} />} label="Add New Word" onClick={() => setView('addWord')} />
             <MenuButton icon={<Plus size={20} />} label="Add New Sentence" onClick={() => setView('addSentence')} />
             <MenuButton icon={<Edit2 size={20} />} label="Manage All Data" onClick={() => setView('manage')} />
-            <MenuButton icon={<AlertCircle size={20} />} label="Change Password" onClick={() => setView('changePass')} />
+            <MenuButton icon={<AlertCircle size={20} />} label="Change Admin Credentials" onClick={() => setView('changePass')} />
+            <MenuButton 
+              icon={isDarkMode ? <Sun size={20} /> : <Moon size={20} />} 
+              label={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"} 
+              onClick={() => setIsDarkMode(!isDarkMode)} 
+            />
+            <MenuButton 
+              icon={<Wifi size={20} />} 
+              label="Test Supabase Connection" 
+              onClick={async () => {
+                const res = await apiService.checkConnection();
+                showToast(res.message, res.connected ? 'success' : 'error');
+              }} 
+            />
+            <MenuButton icon={<LogOut size={20} />} label="Logout" onClick={onLogout} />
             
             <Card className="mt-4 bg-blue-50 dark:bg-blue-900/10 border-blue-100 dark:border-blue-900/30">
               <div className="flex items-start gap-3">
@@ -672,7 +719,7 @@ const AdminPanel = ({ onLogout, words, sentences, refreshData }: {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
           >
-            <ChangePasswordForm onCancel={() => setView('menu')} showToast={showToast} />
+            <UpdateCredentialsForm onCancel={() => setView('menu')} showToast={showToast} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -835,19 +882,25 @@ const ManageData = ({ words, sentences, onBack, onDelete }: { words: Word[]; sen
   );
 };
 
-const ChangePasswordForm = ({ onCancel, showToast }: { onCancel: () => void; showToast: (m: string, t?: any) => void }) => {
-  const [oldPass, setOldPass] = useState('');
+const UpdateCredentialsForm = ({ onCancel, showToast }: { onCancel: () => void; showToast: (m: string, t?: any) => void }) => {
+  const [newUsername, setNewUsername] = useState('');
   const [newPass, setNewPass] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async () => {
+    if (!newUsername) {
+      showToast("Username is required", "error");
+      return;
+    }
     setIsSubmitting(true);
-    const res = await apiService.changePassword(oldPass, newPass);
+    const res = await apiService.updateAdminCredentials(newUsername, newPass || undefined);
     if (res.success) {
-      showToast("Password updated successfully");
-      onCancel();
+      showToast("Credentials updated successfully. Please login again.");
+      // Log out to force new login
+      localStorage.removeItem('isLoggedIn');
+      window.location.reload();
     } else {
-      showToast(res.message || "Failed to update password", "error");
+      showToast(res.message || "Failed to update credentials", "error");
     }
     setIsSubmitting(false);
   };
@@ -855,15 +908,16 @@ const ChangePasswordForm = ({ onCancel, showToast }: { onCancel: () => void; sho
   return (
     <Card className="space-y-4">
       <div className="flex justify-between items-center mb-2">
-        <h3 className="text-lg font-bold">Change Password</h3>
+        <h3 className="text-lg font-bold">Update Admin Credentials</h3>
         <button onClick={onCancel} className="p-1 text-[var(--muted-foreground)]"><X size={20} /></button>
       </div>
-      <Input label="Current Password" type="password" value={oldPass} onChange={setOldPass} />
-      <Input label="New Password" type="password" value={newPass} onChange={setNewPass} />
+      <p className="text-xs text-[var(--muted-foreground)]">Enter a new username and password. Leave password blank to keep current.</p>
+      <Input label="New Username" value={newUsername} onChange={setNewUsername} placeholder="e.g. admin_new" />
+      <Input label="New Password" type="password" value={newPass} onChange={setNewPass} placeholder="Leave blank to keep current" />
       <div className="flex gap-3 pt-2">
         <Button variant="secondary" className="flex-1" onClick={onCancel}>Cancel</Button>
-        <Button className="flex-1" onClick={handleSubmit} disabled={isSubmitting || !oldPass || !newPass}>
-          {isSubmitting ? "Updating..." : "Update Password"}
+        <Button className="flex-1" onClick={handleSubmit} disabled={isSubmitting || !newUsername}>
+          {isSubmitting ? "Updating..." : "Update Credentials"}
         </Button>
       </div>
     </Card>
